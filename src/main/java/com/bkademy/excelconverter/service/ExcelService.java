@@ -9,6 +9,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.*;
 import java.nio.file.*;
 import java.text.Normalizer;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -123,13 +125,6 @@ public class ExcelService {
 
     private Workbook extractData(Workbook inputWorkbook, String filePath) {
         Workbook outputWorkbook = new XSSFWorkbook();
-        Sheet outputSheet = outputWorkbook.createSheet("Kết quả");
-
-        Row outHeader = outputSheet.createRow(0);
-        outHeader.createCell(0).setCellValue("STT");
-        outHeader.createCell(1).setCellValue("MSSV");
-        outHeader.createCell(2).setCellValue("Điểm rèn luyện");
-        outHeader.createCell(3).setCellValue("Kỳ học");
 
         String fileName = stripExtension(Paths.get(filePath).getFileName().toString());
         String folderName = Paths.get(filePath).getParent() != null
@@ -138,15 +133,62 @@ public class ExcelService {
 
         DataFormatter formatter = new DataFormatter();
         FormulaEvaluator evaluator = createFormulaEvaluator(inputWorkbook);
-        int outRowIdx = 1;
+        Set<String> usedSheetNames = new HashSet<>();
 
         for (int i = 0; i < inputWorkbook.getNumberOfSheets(); i++) {
             Sheet inputSheet = inputWorkbook.getSheetAt(i);
-            outRowIdx = extractSheet(inputSheet, outputSheet, formatter, evaluator, outRowIdx, fileName, folderName);
+            String sheetName = uniqueSheetName(inputSheet.getSheetName(), usedSheetNames);
+            Sheet outputSheet = outputWorkbook.createSheet(sheetName);
+            createOutputHeader(outputSheet);
+            extractSheet(inputSheet, outputSheet, formatter, evaluator, 1, fileName, folderName);
+            ExcelOutputFormatter.format(outputSheet);
         }
 
-        ExcelOutputFormatter.format(outputSheet);
+        if (outputWorkbook.getNumberOfSheets() == 0) {
+            Sheet outputSheet = outputWorkbook.createSheet("Kết quả");
+            createOutputHeader(outputSheet);
+            ExcelOutputFormatter.format(outputSheet);
+        }
+
         return outputWorkbook;
+    }
+
+    private void createOutputHeader(Sheet outputSheet) {
+        Row outHeader = outputSheet.createRow(0);
+        outHeader.createCell(0).setCellValue("STT");
+        outHeader.createCell(1).setCellValue("MSSV");
+        outHeader.createCell(2).setCellValue("Điểm rèn luyện");
+        outHeader.createCell(3).setCellValue("Kỳ học");
+    }
+
+    private String uniqueSheetName(String rawName, Set<String> usedNames) {
+        String sanitized = sanitizeSheetName(rawName);
+        if (sanitized.isEmpty()) {
+            sanitized = "Sheet";
+        }
+
+        String candidate = sanitized;
+        int suffix = 2;
+        while (usedNames.contains(candidate)) {
+            String suffixText = " (" + suffix + ")";
+            int maxBaseLength = 31 - suffixText.length();
+            String base = sanitized.length() > maxBaseLength
+                    ? sanitized.substring(0, maxBaseLength)
+                    : sanitized;
+            candidate = base + suffixText;
+            suffix++;
+        }
+
+        usedNames.add(candidate);
+        return candidate;
+    }
+
+    private String sanitizeSheetName(String name) {
+        if (name == null || name.isBlank()) {
+            return "";
+        }
+        String sanitized = name.replaceAll("[\\\\/?*\\[\\]]", " ").trim();
+        return sanitized.length() > 31 ? sanitized.substring(0, 31) : sanitized;
     }
 
     private int extractSheet(Sheet inputSheet, Sheet outputSheet, DataFormatter formatter,

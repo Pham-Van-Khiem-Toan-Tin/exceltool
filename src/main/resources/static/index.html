@@ -201,6 +201,105 @@
             margin-right: 0.35rem;
         }
 
+        .picker-input {
+            display: none;
+        }
+
+        .picker-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            width: 100%;
+            padding: 0.9rem 1rem;
+            border: 2px dashed #94a3b8;
+            border-radius: 12px;
+            background: #fff;
+            color: var(--primary);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .picker-btn:hover {
+            border-color: var(--primary);
+            background: #eff6ff;
+        }
+
+        .picker-summary {
+            display: none;
+            margin-top: 1rem;
+            padding: 0.85rem 1rem;
+            border-radius: 12px;
+            background: #ecfdf5;
+            border: 1px solid #bbf7d0;
+        }
+
+        .picker-summary.visible {
+            display: block;
+        }
+
+        .picker-summary-title {
+            font-weight: 700;
+            color: #166534;
+            font-size: 0.92rem;
+            margin-bottom: 0.35rem;
+            word-break: break-all;
+        }
+
+        .picker-summary-meta {
+            font-size: 0.85rem;
+            color: #15803d;
+        }
+
+        .file-preview {
+            display: none;
+            margin-top: 0.75rem;
+            max-height: 180px;
+            overflow-y: auto;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: #fff;
+        }
+
+        .file-preview.visible {
+            display: block;
+        }
+
+        .file-preview-item {
+            padding: 0.45rem 0.75rem;
+            font-size: 0.8rem;
+            color: #475569;
+            border-bottom: 1px solid #f1f5f9;
+            word-break: break-all;
+        }
+
+        .file-preview-item:last-child {
+            border-bottom: none;
+        }
+
+        .btn-clear {
+            margin-top: 0.65rem;
+            padding: 0.35rem 0.75rem;
+            font-size: 0.82rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            background: #fff;
+            color: #64748b;
+            cursor: pointer;
+        }
+
+        .btn-clear:hover {
+            background: #f8fafc;
+        }
+
+        .browser-note {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.75rem;
+            line-height: 1.45;
+        }
+
         @media (max-width: 576px) {
             .page-wrap {
                 padding: 0.75rem 0.75rem 2rem;
@@ -266,11 +365,28 @@
                 <div class="tab-pane fade" id="folder-upload" role="tabpanel">
                     <form id="folderUploadForm">
                         <div class="upload-zone">
-                            <label for="excelFolder" class="form-label">Chọn thư mục chứa file Excel</label>
-                            <input class="form-control" type="file" id="excelFolder" name="files" webkitdirectory directory multiple required>
-                            <small class="text-muted d-block mt-2">Hệ thống sẽ quét toàn bộ file Excel/Zip trong thư mục.</small>
+                            <button type="button" class="picker-btn" id="folderPickerBtn">
+                                <i class="bi bi-folder-plus"></i>
+                                <span>Chọn thư mục trên máy</span>
+                            </button>
+
+                            <div class="picker-summary" id="folderSummary">
+                                <div class="picker-summary-title" id="folderName"></div>
+                                <div class="picker-summary-meta" id="folderMeta"></div>
+                                <button type="button" class="btn-clear" id="clearFolderBtn">
+                                    <i class="bi bi-x-circle"></i> Chọn thư mục khác
+                                </button>
+                            </div>
+
+                            <div class="file-preview" id="folderFilePreview"></div>
+
+                            <p class="browser-note">
+                                <i class="bi bi-info-circle"></i>
+                                Trình duyệt sẽ quét toàn bộ thư mục con. Chỉ file <strong>.xlsx, .xls, .zip</strong> được xử lý.
+                                Cấu trúc thư mục gốc được giữ nguyên trong file zip kết quả.
+                            </p>
                         </div>
-                        <button type="submit" class="btn-submit">
+                        <button type="submit" class="btn-submit" id="folderSubmitBtn" disabled>
                             <i class="bi bi-cloud-upload"></i> Xử lý & Tải xuống
                         </button>
                     </form>
@@ -298,12 +414,33 @@
         </main>
     </div>
 
+    <!-- Input folder đặt ngoài tab — tránh lỗi display:none chặn hộp thoại chọn thư mục -->
+    <input class="picker-input" type="file" id="excelFolder"
+           webkitdirectory directory mozdirectory multiple>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const CHUNK_SIZE = 2 * 1024 * 1024;
+        const GENERIC_ERROR = 'Hệ thống gặp lỗi bất ngờ. Vui lòng thử lại sau.';
+        let selectedFolderFiles = null;
+
+        function clientError(message) {
+            const error = new Error(message);
+            error.isClientError = true;
+            return error;
+        }
 
         function showError(message) {
             document.getElementById('errorAlert').textContent = message;
             document.getElementById('errorAlert').classList.remove('d-none');
+        }
+
+        function showErrorFromCatch(error) {
+            if (error && error.isClientError) {
+                showError(error.message);
+            } else {
+                showError(GENERIC_ERROR);
+            }
         }
 
         function hideError() {
@@ -320,8 +457,16 @@
             document.getElementById('progressStatus').textContent = message;
         }
 
+        function hideProgress() {
+            document.getElementById('progressPanel').style.display = 'none';
+            setProgress('upload', 0);
+            setProgress('download', 0);
+            setStatus('Đang khởi tạo...');
+        }
+
         function collectValidFiles(fileList) {
             const files = [];
+            if (!fileList) return files;
             for (const file of fileList) {
                 if (/\.(xlsx|xls|zip)$/i.test(file.name)) {
                     files.push({
@@ -333,10 +478,74 @@
             return files;
         }
 
+        function getFolderNameFromFiles(files) {
+            if (files.length === 0) return '';
+            const firstPath = files[0].relativePath;
+            const slash = firstPath.indexOf('/');
+            return slash > 0 ? firstPath.substring(0, slash) : firstPath;
+        }
+
+        function updateFolderPreview(fileList) {
+            selectedFolderFiles = fileList;
+            const validFiles = collectValidFiles(fileList);
+            const summary = document.getElementById('folderSummary');
+            const preview = document.getElementById('folderFilePreview');
+            const submitBtn = document.getElementById('folderSubmitBtn');
+            const folderNameEl = document.getElementById('folderName');
+            const folderMetaEl = document.getElementById('folderMeta');
+
+            if (validFiles.length === 0) {
+                summary.classList.remove('visible');
+                preview.classList.remove('visible');
+                preview.innerHTML = '';
+                submitBtn.disabled = true;
+                if (fileList && fileList.length > 0) {
+                    showError('Thư mục đã chọn không có file Excel hoặc Zip hợp lệ.');
+                }
+                return;
+            }
+
+            hideError();
+            const folderName = getFolderNameFromFiles(validFiles);
+            const totalScanned = fileList.length;
+
+            folderNameEl.innerHTML = '<i class="bi bi-folder2"></i> ' + folderName;
+            folderMetaEl.textContent = validFiles.length + ' file Excel/Zip (đã quét ' + totalScanned + ' file trong thư mục)';
+            summary.classList.add('visible');
+            submitBtn.disabled = false;
+
+            const maxShow = 8;
+            let html = '';
+            validFiles.slice(0, maxShow).forEach(function(item) {
+                html += '<div class="file-preview-item"><i class="bi bi-file-earmark-excel text-success"></i> ' + item.relativePath + '</div>';
+            });
+            if (validFiles.length > maxShow) {
+                html += '<div class="file-preview-item text-muted">... và ' + (validFiles.length - maxShow) + ' file khác</div>';
+            }
+            preview.innerHTML = html;
+            preview.classList.add('visible');
+        }
+
+        document.getElementById('folderPickerBtn').addEventListener('click', function() {
+            document.getElementById('excelFolder').click();
+        });
+
+        document.getElementById('excelFolder').addEventListener('change', function() {
+            updateFolderPreview(this.files);
+        });
+
+        document.getElementById('clearFolderBtn').addEventListener('click', function() {
+            const input = document.getElementById('excelFolder');
+            input.value = '';
+            selectedFolderFiles = null;
+            updateFolderPreview(input.files);
+            hideError();
+        });
+
         async function initSession() {
             const response = await fetch('/api/upload/init', { method: 'POST' });
             if (!response.ok) {
-                throw new Error('Không thể tạo session upload');
+                throw new Error(GENERIC_ERROR);
             }
             const data = await response.json();
             return data.sessionId;
@@ -354,8 +563,7 @@
                 body: formData
             });
             if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || 'Upload chunk thất bại');
+                throw new Error(GENERIC_ERROR);
             }
         }
 
@@ -373,8 +581,7 @@
         async function completeUpload(sessionId) {
             const response = await fetch('/api/upload/' + sessionId + '/complete', { method: 'POST' });
             if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || 'Xử lý file thất bại');
+                throw new Error(GENERIC_ERROR);
             }
         }
 
@@ -395,11 +602,11 @@
                         setProgress('download', 100);
                         resolve(xhr.response);
                     } else {
-                        reject(new Error('Download thất bại'));
+                        reject(new Error(GENERIC_ERROR));
                     }
                 };
 
-                xhr.onerror = () => reject(new Error('Download thất bại'));
+                xhr.onerror = () => reject(new Error(GENERIC_ERROR));
                 xhr.send();
             });
         }
@@ -420,7 +627,7 @@
 
             const files = collectValidFiles(fileList);
             if (files.length === 0) {
-                throw new Error('Không tìm thấy file Excel hoặc Zip hợp lệ');
+                throw clientError('Không tìm thấy file Excel hoặc Zip hợp lệ.');
             }
 
             let sessionId = null;
@@ -451,8 +658,9 @@
                 document.body.removeChild(link);
                 window.URL.revokeObjectURL(link.href);
 
-                setStatus('Hoàn tất.');
+                hideProgress();
             } catch (error) {
+                hideProgress();
                 await cleanupSession(sessionId);
                 throw error;
             } finally {
@@ -460,25 +668,29 @@
             }
         }
 
-        function bindForm(formId, inputId) {
+        function bindForm(formId, getFiles) {
             document.getElementById(formId).addEventListener('submit', async (event) => {
                 event.preventDefault();
-                const input = document.getElementById(inputId);
+                const fileList = getFiles();
                 const submitButtons = document.querySelectorAll('.btn-submit');
                 submitButtons.forEach((btn) => btn.disabled = true);
 
                 try {
-                    await handleUpload(input.files);
+                    await handleUpload(fileList);
                 } catch (error) {
-                    showError(error.message || 'Đã xảy ra lỗi trong quá trình xử lý.');
+                    showErrorFromCatch(error);
                 } finally {
                     submitButtons.forEach((btn) => btn.disabled = false);
+                    if (formId === 'folderUploadForm') {
+                        document.getElementById('folderSubmitBtn').disabled =
+                            collectValidFiles(selectedFolderFiles || []).length === 0;
+                    }
                 }
             });
         }
 
-        bindForm('fileUploadForm', 'excelFiles');
-        bindForm('folderUploadForm', 'excelFolder');
+        bindForm('fileUploadForm', () => document.getElementById('excelFiles').files);
+        bindForm('folderUploadForm', () => selectedFolderFiles || document.getElementById('excelFolder').files);
     </script>
 </body>
 </html>
