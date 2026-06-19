@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Converter - Điểm Rèn Luyện</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --surface: #ffffff;
+            --bg: #eef2ff;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --success: #16a34a;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+            background: linear-gradient(160deg, #eef2ff 0%, #f8fafc 45%, #ecfeff 100%);
+            color: #0f172a;
+        }
+
+        .page-wrap {
+            width: min(920px, 100%);
+            margin: 0 auto;
+            padding: 1rem 1rem 2.5rem;
+        }
+
+        .hero {
+            text-align: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .hero-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, var(--primary), #06b6d4);
+            color: #fff;
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.25);
+        }
+
+        .hero h1 {
+            font-size: clamp(1.35rem, 4vw, 1.85rem);
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+        }
+
+        .hero p {
+            color: var(--text-muted);
+            margin: 0;
+            font-size: clamp(0.9rem, 2.5vw, 1rem);
+        }
+
+        .card-panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+            overflow: hidden;
+        }
+
+        .nav-tabs {
+            border-bottom: 1px solid var(--border);
+            padding: 0.5rem 0.75rem 0;
+            gap: 0.35rem;
+        }
+
+        .nav-tabs .nav-link {
+            border: none;
+            border-radius: 10px 10px 0 0;
+            color: var(--text-muted);
+            font-weight: 600;
+            padding: 0.75rem 1rem;
+            white-space: nowrap;
+        }
+
+        .nav-tabs .nav-link.active {
+            color: var(--primary);
+            background: #eff6ff;
+            border-bottom: 3px solid var(--primary);
+        }
+
+        .tab-body {
+            padding: clamp(1rem, 3vw, 1.5rem);
+        }
+
+        .upload-zone {
+            border: 2px dashed #cbd5e1;
+            border-radius: 14px;
+            padding: 1.25rem;
+            background: #f8fafc;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .upload-zone:focus-within {
+            border-color: var(--primary);
+            background: #eff6ff;
+        }
+
+        .form-label {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .form-control {
+            border-radius: 10px;
+            border-color: #cbd5e1;
+            padding: 0.65rem 0.85rem;
+        }
+
+        .btn-submit {
+            margin-top: 1rem;
+            width: 100%;
+            border: none;
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            box-shadow: 0 8px 20px rgba(37, 99, 235, 0.28);
+        }
+
+        .btn-submit:disabled {
+            opacity: 0.65;
+            box-shadow: none;
+        }
+
+        .progress-panel {
+            display: none;
+            margin-top: 1.25rem;
+            padding: 1rem;
+            border-radius: 14px;
+            background: #f8fafc;
+            border: 1px solid var(--border);
+        }
+
+        .progress-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+        }
+
+        .progress-row + .progress-row {
+            margin-top: 0.85rem;
+        }
+
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 0.35rem;
+        }
+
+        .progress {
+            height: 10px;
+            border-radius: 999px;
+            background: #e2e8f0;
+        }
+
+        .progress-bar {
+            border-radius: 999px;
+        }
+
+        .status-text {
+            margin-top: 0.75rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.65rem;
+            margin-top: 1rem;
+        }
+
+        .feature-item {
+            background: #f1f5f9;
+            border-radius: 10px;
+            padding: 0.65rem 0.75rem;
+            font-size: 0.82rem;
+            color: #475569;
+        }
+
+        .feature-item i {
+            color: var(--primary);
+            margin-right: 0.35rem;
+        }
+
+        @media (max-width: 576px) {
+            .page-wrap {
+                padding: 0.75rem 0.75rem 2rem;
+            }
+
+            .nav-tabs {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+
+            .nav-tabs::-webkit-scrollbar {
+                display: none;
+            }
+
+            .nav-tabs .nav-link {
+                font-size: 0.88rem;
+                padding: 0.65rem 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page-wrap">
+        <header class="hero">
+            <div class="hero-icon"><i class="bi bi-file-earmark-spreadsheet"></i></div>
+            <h1>Chuyển đổi điểm rèn luyện</h1>
+            <p>Upload Excel, Zip hoặc Folder — tự động trích xuất MSSV, điểm và kỳ học</p>
+        </header>
+
+        <main class="card-panel">
+            <ul class="nav nav-tabs" id="uploadTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="file-tab" data-bs-toggle="tab" data-bs-target="#file-upload" type="button">
+                        <i class="bi bi-files"></i> File / Zip
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="folder-tab" data-bs-toggle="tab" data-bs-target="#folder-upload" type="button">
+                        <i class="bi bi-folder2-open"></i> Folder
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content tab-body">
+                <div class="tab-pane fade show active" id="file-upload" role="tabpanel">
+                    <form id="fileUploadForm">
+                        <div class="upload-zone">
+                            <label for="excelFiles" class="form-label">Chọn file Excel hoặc Zip</label>
+                            <input class="form-control" type="file" id="excelFiles" name="files" multiple accept=".xlsx,.xls,.zip" required>
+                            <div class="feature-list">
+                                <div class="feature-item"><i class="bi bi-check2-circle"></i>.xlsx, .xls, .zip</div>
+                                <div class="feature-item"><i class="bi bi-check2-circle"></i>Upload theo chunk</div>
+                                <div class="feature-item"><i class="bi bi-check2-circle"></i>Font Times New Roman</div>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-submit">
+                            <i class="bi bi-cloud-upload"></i> Xử lý & Tải xuống
+                        </button>
+                    </form>
+                </div>
+
+                <div class="tab-pane fade" id="folder-upload" role="tabpanel">
+                    <form id="folderUploadForm">
+                        <div class="upload-zone">
+                            <label for="excelFolder" class="form-label">Chọn thư mục chứa file Excel</label>
+                            <input class="form-control" type="file" id="excelFolder" name="files" webkitdirectory directory multiple required>
+                            <small class="text-muted d-block mt-2">Hệ thống sẽ quét toàn bộ file Excel/Zip trong thư mục.</small>
+                        </div>
+                        <button type="submit" class="btn-submit">
+                            <i class="bi bi-cloud-upload"></i> Xử lý & Tải xuống
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="progress-panel mx-3 mb-3" id="progressPanel">
+                <div class="progress-title"><i class="bi bi-arrow-repeat"></i> Tiến trình xử lý</div>
+                <div class="progress-row">
+                    <div class="progress-label"><span>Upload</span><span id="uploadPercent">0</span>%</div>
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" id="uploadBar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="progress-row">
+                    <div class="progress-label"><span>Download</span><span id="downloadPercent">0</span>%</div>
+                    <div class="progress">
+                        <div class="progress-bar bg-success" id="downloadBar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="status-text" id="progressStatus">Đang khởi tạo...</div>
+            </div>
+
+            <div class="alert alert-danger mx-3 mb-3 d-none" id="errorAlert" role="alert"></div>
+        </main>
+    </div>
+
+    <script>
+        const CHUNK_SIZE = 2 * 1024 * 1024;
+
+        function showError(message) {
+            document.getElementById('errorAlert').textContent = message;
+            document.getElementById('errorAlert').classList.remove('d-none');
+        }
+
+        function hideError() {
+            document.getElementById('errorAlert').classList.add('d-none');
+        }
+
+        function setProgress(type, percent) {
+            const value = Math.max(0, Math.min(100, Math.round(percent)));
+            document.getElementById(type + 'Percent').textContent = value;
+            document.getElementById(type + 'Bar').style.width = value + '%';
+        }
+
+        function setStatus(message) {
+            document.getElementById('progressStatus').textContent = message;
+        }
+
+        function collectValidFiles(fileList) {
+            const files = [];
+            for (const file of fileList) {
+                if (/\.(xlsx|xls|zip)$/i.test(file.name)) {
+                    files.push({
+                        file: file,
+                        relativePath: file.webkitRelativePath || file.name
+                    });
+                }
+            }
+            return files;
+        }
+
+        async function initSession() {
+            const response = await fetch('/api/upload/init', { method: 'POST' });
+            if (!response.ok) {
+                throw new Error('Không thể tạo session upload');
+            }
+            const data = await response.json();
+            return data.sessionId;
+        }
+
+        async function uploadChunk(sessionId, relativePath, chunkIndex, totalChunks, blob) {
+            const formData = new FormData();
+            formData.append('relativePath', relativePath);
+            formData.append('chunkIndex', chunkIndex);
+            formData.append('totalChunks', totalChunks);
+            formData.append('file', blob, 'chunk.bin');
+
+            const response = await fetch('/api/upload/' + sessionId + '/chunk', {
+                method: 'POST',
+                body: formData
+            });
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || 'Upload chunk thất bại');
+            }
+        }
+
+        async function uploadFileInChunks(sessionId, file, relativePath, onFileProgress) {
+            const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, file.size);
+                const chunk = file.slice(start, end);
+                await uploadChunk(sessionId, relativePath, i, totalChunks, chunk);
+                onFileProgress((i + 1) / totalChunks * 100);
+            }
+        }
+
+        async function completeUpload(sessionId) {
+            const response = await fetch('/api/upload/' + sessionId + '/complete', { method: 'POST' });
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || 'Xử lý file thất bại');
+            }
+        }
+
+        function downloadResult(sessionId) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', '/api/upload/' + sessionId + '/download');
+                xhr.responseType = 'blob';
+
+                xhr.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        setProgress('download', (event.loaded / event.total) * 100);
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status === 200) {
+                        setProgress('download', 100);
+                        resolve(xhr.response);
+                    } else {
+                        reject(new Error('Download thất bại'));
+                    }
+                };
+
+                xhr.onerror = () => reject(new Error('Download thất bại'));
+                xhr.send();
+            });
+        }
+
+        async function cleanupSession(sessionId) {
+            if (!sessionId) return;
+            try {
+                await fetch('/api/upload/' + sessionId, { method: 'DELETE' });
+            } catch (ignored) {
+            }
+        }
+
+        async function handleUpload(fileList) {
+            hideError();
+            document.getElementById('progressPanel').style.display = 'block';
+            setProgress('upload', 0);
+            setProgress('download', 0);
+
+            const files = collectValidFiles(fileList);
+            if (files.length === 0) {
+                throw new Error('Không tìm thấy file Excel hoặc Zip hợp lệ');
+            }
+
+            let sessionId = null;
+            try {
+                sessionId = await initSession();
+                setStatus('Đang upload ' + files.length + ' file...');
+
+                for (let index = 0; index < files.length; index++) {
+                    const item = files[index];
+                    await uploadFileInChunks(sessionId, item.file, item.relativePath, (filePercent) => {
+                        const overall = ((index + filePercent / 100) / files.length) * 100;
+                        setProgress('upload', overall);
+                    });
+                }
+
+                setProgress('upload', 100);
+                setStatus('Đang xử lý và chuyển đổi file...');
+                await completeUpload(sessionId);
+
+                setStatus('Đang tải file kết quả...');
+                const blob = await downloadResult(sessionId);
+
+                const link = document.createElement('a');
+                link.href = window.URL.createObjectURL(blob);
+                link.download = 'converted_files.zip';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(link.href);
+
+                setStatus('Hoàn tất.');
+            } catch (error) {
+                await cleanupSession(sessionId);
+                throw error;
+            } finally {
+                await cleanupSession(sessionId);
+            }
+        }
+
+        function bindForm(formId, inputId) {
+            document.getElementById(formId).addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const input = document.getElementById(inputId);
+                const submitButtons = document.querySelectorAll('.btn-submit');
+                submitButtons.forEach((btn) => btn.disabled = true);
+
+                try {
+                    await handleUpload(input.files);
+                } catch (error) {
+                    showError(error.message || 'Đã xảy ra lỗi trong quá trình xử lý.');
+                } finally {
+                    submitButtons.forEach((btn) => btn.disabled = false);
+                }
+            });
+        }
+
+        bindForm('fileUploadForm', 'excelFiles');
+        bindForm('folderUploadForm', 'excelFolder');
+    </script>
+</body>
+</html>
