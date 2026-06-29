@@ -9,8 +9,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.*;
 import java.nio.file.*;
 import java.text.Normalizer;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -19,52 +19,206 @@ import java.util.zip.ZipOutputStream;
 @Service
 public class ExcelService {
 
+    private record Student(String mssv, String diem, String kyHoc, String sourceFile, String sheetName) {
+        public String getConflictKey() {
+            return mssv + "::" + kyHoc;
+        }
+    }
+
     public byte[] processFiles(MultipartFile[] files) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        List<Student> allStudents = new ArrayList<>();
+        Map<String, byte[]> originalFileContents = new HashMap<>();
 
-        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
-            for (MultipartFile file : files) {
-                String filename = file.getOriginalFilename();
+        for (MultipartFile file : files) {
+            String filename = file.getOriginalFilename();
+            if (filename == null) continue;
 
-                if (filename == null) continue;
+            byte[] content = file.getBytes();
+            originalFileContents.put(filename, content);
 
-                if (filename.toLowerCase().endsWith(".zip")) {
-                    processZipFile(file.getInputStream(), zos);
-                } else if (filename.toLowerCase().endsWith(".xls") || filename.toLowerCase().endsWith(".xlsx")) {
-                    processAndAddExcelToZip(file.getInputStream(), filename, zos);
+            if (filename.toLowerCase().endsWith(".zip")) {
+                extractStudentsFromZip(new ByteArrayInputStream(content), filename, allStudents);
+            } else if (isExcelFile(filename)) {
+                extractStudentsFromExcel(new ByteArrayInputStream(content), filename, allStudents);
+            }
+        }
+
+        return generateZipOutput(allStudents, originalFileContents);
+    }
+
+    public byte[] processDirectory(Path rootDir) throws IOException {
+        List<Student> allStudents = new ArrayList<>();
+        Map<String, byte[]> originalFileContents = new HashMap<>();
+        Path baseDir = rootDir.toAbsolutePath().normalize();
+
+        try (Stream<Path> paths = Files.walk(baseDir)) {
+            List<Path> filePaths = paths.filter(Files::isRegularFile)
+                    .filter(this::isSupportedFile)
+                    .sorted()
+                    .collect(Collectors.toList());
+
+            for (Path path : filePaths) {
+                String relativePath = baseDir.relativize(path).toString().replace('\\', '/');
+                byte[] content = Files.readAllBytes(path);
+                originalFileContents.put(relativePath, content);
+
+                if (relativePath.toLowerCase().endsWith(".zip")) {
+                    extractStudentsFromZip(new ByteArrayInputStream(content), relativePath, allStudents);
+                } else if (isExcelFile(relativePath)) {
+                    extractStudentsFromExcel(new ByteArrayInputStream(content), relativePath, allStudents);
                 }
             }
         }
 
+        return generateZipOutput(allStudents, originalFileContents);
+    }
+
+    private void extractStudentsFromExcel(InputStream excelInput, String filePath, List<Student> allStudents) throws IOException {
+        try (Workbook workbook = WorkbookFactory.create(excelInput)) {
+            DataFormatter formatter = new DataFormatter();
+            FormulaEvaluator evaluator = createFormulaEvaluator(workbook);
+            String fileName = stripExtension(Paths.get(filePath).getFileName().toString());
+            String folderName = Optional.ofNullable(Paths.get(filePath).getParent()).map(p -> p.getFileName().toString()).orElse("");
+
+            Set<String> usedSheetNames = new HashSet<>();
+
+            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
+                Sheet sheet = workbook.getSheetAt(i);
+                String originalSheetName = sheet.getSheetName();
+                String uniqueSheetName = uniqueSheetName(originalSheetName, usedSheetNames);
+                allStudents.addAll(extractStudentsFromSheet(sheet, formatter, evaluator, fileName, folderName, filePath, uniqueSheetName));
+            }
+        } catch (Exception e) {
+            System.err.println("Could not process Excel file: " + filePath + ". Error: " + e.getMessage());
+        }
+    }
+
+    private void extractStudentsFromZip(InputStream zipInput, String zipFilePath, List<Student> allStudents) throws IOException {
+        try (ZipInputStream zis = new ZipInputStream(zipInput)) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (!entry.isDirectory() && isExcelFile(entry.getName())) {
+                    ByteArrayOutputStream entryOut = new ByteArrayOutputStream();
+                    zis.transferTo(entryOut);
+                    String entryPath = zipFilePath + "/" + entry.getName();
+                    extractStudentsFromExcel(new ByteArrayInputStream(entryOut.toByteArray()), entryPath, allStudents);
+                }
+                zis.closeEntry();
+            }
+        }
+    }
+
+    private byte[] generateZipOutput(List<Student> allStudents, Map<String, byte[]> originalFileContents) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+
+            Map<String, Set<String>> scoresByStudentAndSemester = new HashMap<>();
+            for (Student s : allStudents) {
+                scoresByStudentAndSemester.computeIfAbsent(s.getConflictKey(), k -> new HashSet<>()).add(s.diem());
+            }
+
+            Set<String> conflictKeys = scoresByStudentAndSemester.entrySet().stream()
+                    .filter(e -> e.getValue().size() > 1)
+                    .map(Map.Entry::getKey)
+                    .collect(Collectors.toSet());
+
+            List<Student> conflictingStudents = allStudents.stream()
+                    .filter(s -> conflictKeys.contains(s.getConflictKey()))
+                    .sorted(Comparator.comparing(Student::mssv)
+                            .thenComparing(Student::kyHoc)
+                            .thenComparing(Student::diem))
+                    .collect(Collectors.toList());
+
+            List<Student> cleanStudents = allStudents.stream()
+                    .filter(s -> !conflictKeys.contains(s.getConflictKey()))
+                    .collect(Collectors.toList());
+
+            Map<String, List<Student>> cleanStudentsByFile = cleanStudents.stream()
+                    .collect(Collectors.groupingBy(Student::sourceFile));
+
+            for (Map.Entry<String, byte[]> fileEntry : originalFileContents.entrySet()) {
+                String filePath = fileEntry.getKey();
+                if (!isExcelFile(filePath)) {
+                    zos.putNextEntry(new ZipEntry(filePath));
+zos.write(fileEntry.getValue());
+                    zos.closeEntry();
+                }
+            }
+
+            for (Map.Entry<String, List<Student>> entry : cleanStudentsByFile.entrySet()) {
+                String sourceFile = entry.getKey();
+                List<Student> fileStudents = entry.getValue();
+
+                try (Workbook outputWorkbook = new XSSFWorkbook()) {
+                    Map<String, List<Student>> studentsBySheet = fileStudents.stream()
+                            .collect(Collectors.groupingBy(Student::sheetName));
+
+                    for (Map.Entry<String, List<Student>> sheetEntry : studentsBySheet.entrySet()) {
+                        Sheet outputSheet = outputWorkbook.createSheet(sheetEntry.getKey());
+                        createOutputHeader(outputSheet, false);
+                        int rowIdx = 1;
+                        for (Student student : sheetEntry.getValue()) {
+                            Row outRow = outputSheet.createRow(rowIdx++);
+                            outRow.createCell(0).setCellValue(rowIdx - 1);
+                            outRow.createCell(1).setCellValue(student.mssv());
+                            outRow.createCell(2).setCellValue(student.diem());
+                            outRow.createCell(3).setCellValue(student.kyHoc());
+                        }
+                        ExcelOutputFormatter.format(outputSheet);
+                    }
+
+                    if (outputWorkbook.getNumberOfSheets() > 0) {
+                        ByteArrayOutputStream processedOut = new ByteArrayOutputStream();
+                        outputWorkbook.write(processedOut);
+                        String outputFilename = getOutputExcelFileName(sourceFile);
+                        zos.putNextEntry(new ZipEntry(outputFilename));
+                        zos.write(processedOut.toByteArray());
+                        zos.closeEntry();
+                    }
+                }
+            }
+
+            if (!conflictingStudents.isEmpty()) {
+                try (Workbook conflictsWorkbook = new XSSFWorkbook()) {
+                    Sheet conflictsSheet = conflictsWorkbook.createSheet("Sinh viên khác điểm");
+                    createOutputHeader(conflictsSheet, true);
+                    int rowIdx = 1;
+                    for (Student student : conflictingStudents) {
+                        Row outRow = conflictsSheet.createRow(rowIdx++);
+                        outRow.createCell(0).setCellValue(rowIdx - 1);
+                        outRow.createCell(1).setCellValue(student.mssv());
+                        outRow.createCell(2).setCellValue(student.diem());
+                        outRow.createCell(3).setCellValue(student.kyHoc());
+                        outRow.createCell(4).setCellValue(student.sourceFile());
+                        outRow.createCell(5).setCellValue(student.sheetName());
+                    }
+                    ExcelOutputFormatter.format(conflictsSheet);
+
+                    ByteArrayOutputStream conflictsOut = new ByteArrayOutputStream();
+                    conflictsWorkbook.write(conflictsOut);
+                    zos.putNextEntry(new ZipEntry("[MAU-THUAN] Sinh vien khac diem.xlsx"));
+                    zos.write(conflictsOut.toByteArray());
+                    zos.closeEntry();
+                }
+            }
+        }
         return baos.toByteArray();
     }
 
-    public byte[] processDirectory(Path rootDir) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        Path baseDir = rootDir.toAbsolutePath().normalize();
-
-        try (ZipOutputStream zos = new ZipOutputStream(baos);
-             Stream<Path> paths = Files.walk(baseDir)) {
-            paths.filter(Files::isRegularFile)
-                    .filter(this::isSupportedFile)
-                    .sorted()
-                    .forEach(path -> {
-                        String relativePath = baseDir.relativize(path).toString().replace('\\', '/');
-                        try (InputStream in = Files.newInputStream(path)) {
-                            if (relativePath.toLowerCase().endsWith(".zip")) {
-                                processZipFile(in, zos);
-                            } else {
-                                processAndAddExcelToZip(in, relativePath, zos);
-                            }
-                        } catch (IOException e) {
-                            throw new UncheckedIOException(e);
-                        }
-                    });
-        } catch (UncheckedIOException e) {
-            throw e.getCause();
+    private String getOutputExcelFileName(String inputPath) {
+        String filename = Paths.get(inputPath).getFileName().toString();
+        String stripped = stripExtension(filename);
+        String parent = Optional.ofNullable(Paths.get(inputPath).getParent()).map(Path::toString).orElse("");
+        parent = parent.replace('\\', '/');
+        if (!parent.isEmpty() && !parent.endsWith("/")) {
+            parent += "/";
         }
+        return parent + stripped + ".xlsx";
+    }
 
-        return baos.toByteArray();
+    private boolean isExcelFile(String filename) {
+        String lower = filename.toLowerCase();
+        return lower.endsWith(".xlsx") || lower.endsWith(".xls");
     }
 
     private boolean isSupportedFile(Path path) {
@@ -72,93 +226,16 @@ public class ExcelService {
         return name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".zip");
     }
 
-    private void processZipFile(InputStream zipInput, ZipOutputStream zos) throws IOException {
-        try (ZipInputStream zis = new ZipInputStream(zipInput)) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                String entryName = entry.getName();
-
-                if (entry.isDirectory()) {
-                    zos.putNextEntry(new ZipEntry(entryName));
-                    zos.closeEntry();
-                } else {
-                    if (entryName.toLowerCase().endsWith(".xls") || entryName.toLowerCase().endsWith(".xlsx")) {
-                        ByteArrayOutputStream entryOut = new ByteArrayOutputStream();
-                        zis.transferTo(entryOut);
-                        ByteArrayInputStream entryIn = new ByteArrayInputStream(entryOut.toByteArray());
-
-                        processAndAddExcelToZip(entryIn, entryName, zos);
-                    } else {
-                        zos.putNextEntry(new ZipEntry(entryName));
-                        zis.transferTo(zos);
-                        zos.closeEntry();
-                    }
-                }
-                zis.closeEntry();
-            }
-        }
-    }
-
-    private void processAndAddExcelToZip(InputStream excelInput, String filePath, ZipOutputStream zos) throws IOException {
-        try (Workbook inputWorkbook = WorkbookFactory.create(excelInput);
-             Workbook outputWorkbook = extractData(inputWorkbook, filePath);
-             ByteArrayOutputStream processedOut = new ByteArrayOutputStream()) {
-
-            outputWorkbook.write(processedOut);
-
-            String filename = Paths.get(filePath).getFileName().toString();
-            if (filename.toLowerCase().endsWith(".xls")) {
-                filename = filename.substring(0, filename.length() - 4) + ".xlsx";
-            }
-
-            String parentPath = Paths.get(filePath).getParent() != null
-                    ? Paths.get(filePath).getParent().toString().replace('\\', '/')
-                    : "";
-            String zipEntryName = parentPath.isEmpty() ? filename : parentPath + "/" + filename;
-
-            ZipEntry zipEntry = new ZipEntry(zipEntryName);
-            zos.putNextEntry(zipEntry);
-            zos.write(processedOut.toByteArray());
-            zos.closeEntry();
-        }
-    }
-
-    private Workbook extractData(Workbook inputWorkbook, String filePath) {
-        Workbook outputWorkbook = new XSSFWorkbook();
-
-        String fileName = stripExtension(Paths.get(filePath).getFileName().toString());
-        String folderName = Paths.get(filePath).getParent() != null
-                ? Paths.get(filePath).getParent().getFileName().toString()
-                : "";
-
-        DataFormatter formatter = new DataFormatter();
-        FormulaEvaluator evaluator = createFormulaEvaluator(inputWorkbook);
-        Set<String> usedSheetNames = new HashSet<>();
-
-        for (int i = 0; i < inputWorkbook.getNumberOfSheets(); i++) {
-            Sheet inputSheet = inputWorkbook.getSheetAt(i);
-            String sheetName = uniqueSheetName(inputSheet.getSheetName(), usedSheetNames);
-            Sheet outputSheet = outputWorkbook.createSheet(sheetName);
-            createOutputHeader(outputSheet);
-            extractSheet(inputSheet, outputSheet, formatter, evaluator, 1, fileName, folderName);
-            ExcelOutputFormatter.format(outputSheet);
-        }
-
-        if (outputWorkbook.getNumberOfSheets() == 0) {
-            Sheet outputSheet = outputWorkbook.createSheet("Kết quả");
-            createOutputHeader(outputSheet);
-            ExcelOutputFormatter.format(outputSheet);
-        }
-
-        return outputWorkbook;
-    }
-
-    private void createOutputHeader(Sheet outputSheet) {
+    private void createOutputHeader(Sheet outputSheet, boolean isConflictSheet) {
         Row outHeader = outputSheet.createRow(0);
         outHeader.createCell(0).setCellValue("STT");
         outHeader.createCell(1).setCellValue("MSSV");
         outHeader.createCell(2).setCellValue("Điểm rèn luyện");
         outHeader.createCell(3).setCellValue("Kỳ học");
+        if (isConflictSheet) {
+            outHeader.createCell(4).setCellValue("File gốc");
+            outHeader.createCell(5).setCellValue("Sheet gốc");
+        }
     }
 
     private String uniqueSheetName(String rawName, Set<String> usedNames) {
@@ -166,19 +243,15 @@ public class ExcelService {
         if (sanitized.isEmpty()) {
             sanitized = "Sheet";
         }
-
         String candidate = sanitized;
         int suffix = 2;
         while (usedNames.contains(candidate)) {
             String suffixText = " (" + suffix + ")";
             int maxBaseLength = 31 - suffixText.length();
-            String base = sanitized.length() > maxBaseLength
-                    ? sanitized.substring(0, maxBaseLength)
-                    : sanitized;
+            String base = sanitized.length() > maxBaseLength ? sanitized.substring(0, maxBaseLength) : sanitized;
             candidate = base + suffixText;
             suffix++;
         }
-
         usedNames.add(candidate);
         return candidate;
     }
@@ -191,8 +264,8 @@ public class ExcelService {
         return sanitized.length() > 31 ? sanitized.substring(0, 31) : sanitized;
     }
 
-    private int extractSheet(Sheet inputSheet, Sheet outputSheet, DataFormatter formatter,
-                             FormulaEvaluator evaluator, int outRowIdx, String fileName, String folderName) {
+    private List<Student> extractStudentsFromSheet(Sheet inputSheet, DataFormatter formatter,
+                                                   FormulaEvaluator evaluator, String fileName, String folderName, String sourceFile, String sheetName) {
         int headerRowIdx = -1;
         int mssvCol = -1;
         int diemCol = -1;
@@ -204,18 +277,12 @@ public class ExcelService {
             if (row == null) continue;
 
             int tempMssv = -1, tempDiem = -1, tempKyHoc = -1;
-            int lastCol = Math.max(row.getLastCellNum(), 0);
+            int lastCol = row.getLastCellNum();
             for (int c = 0; c < lastCol; c++) {
                 String val = getCellValueAsString(row.getCell(c), formatter, evaluator);
-                if (isMssvColumn(val)) {
-                    tempMssv = c;
-                }
-                if (isDiemRenLuyenColumn(val)) {
-                    tempDiem = c;
-                }
-                if (isKyHocColumn(val)) {
-                    tempKyHoc = c;
-                }
+                if (isMssvColumn(val)) tempMssv = c;
+                if (isDiemRenLuyenColumn(val)) tempDiem = c;
+                if (isKyHocColumn(val)) tempKyHoc = c;
             }
 
             if (tempMssv != -1 && tempDiem != -1 && tempMssv != tempDiem) {
@@ -228,9 +295,10 @@ public class ExcelService {
         }
 
         if (headerRowIdx == -1) {
-            return outRowIdx;
+            return Collections.emptyList();
         }
 
+        List<Student> students = new ArrayList<>();
         String titleSemesterText = findSemesterTitle(inputSheet, headerRowIdx, formatter, evaluator);
 
         for (int r = headerRowIdx + 1; r <= inputSheet.getLastRowNum(); r++) {
@@ -241,28 +309,20 @@ public class ExcelService {
             if (!isValidStudentRow(mssv)) continue;
 
             String diem = getCellValueAsString(row.getCell(diemCol), formatter, evaluator).trim();
-            String columnKyHoc = kyHocCol != -1
-                    ? getCellValueAsString(row.getCell(kyHocCol), formatter, evaluator).trim()
-                    : "";
+            String columnKyHoc = kyHocCol != -1 ? getCellValueAsString(row.getCell(kyHocCol), formatter, evaluator).trim() : "";
             String kyHoc = SemesterParser.resolve(columnKyHoc, titleSemesterText, fileName, folderName);
 
-            Row outRow = outputSheet.createRow(outRowIdx);
-            outRow.createCell(0).setCellValue(outRowIdx);
-            outRow.createCell(1).setCellValue(mssv);
-            outRow.createCell(2).setCellValue(diem);
-            outRow.createCell(3).setCellValue(kyHoc);
-            outRowIdx++;
+            students.add(new Student(mssv, diem, kyHoc, sourceFile, sheetName));
         }
 
-        return outRowIdx;
+        return students;
     }
 
     private String findSemesterTitle(Sheet sheet, int headerRowIdx, DataFormatter formatter, FormulaEvaluator evaluator) {
         for (int r = 0; r < headerRowIdx; r++) {
             Row row = sheet.getRow(r);
             if (row == null) continue;
-            int lastCol = Math.max(row.getLastCellNum(), 0);
-            for (int c = 0; c < lastCol; c++) {
+            for (int c = 0; c < row.getLastCellNum(); c++) {
                 String val = getCellValueAsString(row.getCell(c), formatter, evaluator).trim();
                 String n = normalize(val);
                 if (n.contains("hoc ky") || n.contains("hoc ki") || n.contains("nam hoc")) {
@@ -279,9 +339,7 @@ public class ExcelService {
     }
 
     private boolean isValidStudentRow(String mssv) {
-        if (mssv.isEmpty()) {
-            return false;
-        }
+        if (mssv.isEmpty()) return false;
         String n = normalize(mssv);
         if (n.contains("tong") || n.contains("hoc ky") || n.contains("hoc ki")
                 || n.contains("quyet dinh") || n.contains("kem theo") || n.contains("nam hoc")) {
@@ -292,9 +350,7 @@ public class ExcelService {
 
     private boolean isMssvColumn(String val) {
         String n = normalize(val);
-        if (n.length() > 40) {
-            return false;
-        }
+        if (n.length() > 40) return false;
         return n.equals("mssv") || n.equals("msv")
                 || n.contains("ma so")
                 || (n.matches(".*\\bma\\b.*") && (n.contains("sinh vien") || n.endsWith(" sv")));
@@ -302,9 +358,7 @@ public class ExcelService {
 
     private boolean isDiemRenLuyenColumn(String val) {
         String n = normalize(val);
-        if (n.length() > 40) {
-            return false;
-        }
+        if (n.length() > 40) return false;
         return n.equals("drl") || n.equals("diem") || n.equals("diem rl")
                 || (n.contains("diem") && n.contains("ren luyen"))
                 || (n.contains("diem") && n.contains("rl"));
@@ -312,9 +366,7 @@ public class ExcelService {
 
     private boolean isKyHocColumn(String val) {
         String n = normalize(val);
-        if (n.length() > 40) {
-            return false;
-        }
+        if (n.length() > 40) return false;
         return n.contains("ky hoc") || n.contains("hoc ky") || n.contains("hoc ki");
     }
 
@@ -335,9 +387,7 @@ public class ExcelService {
     }
 
     private String getCellValueAsString(Cell cell, DataFormatter formatter, FormulaEvaluator evaluator) {
-        if (cell == null) {
-            return "";
-        }
+        if (cell == null) return "";
         try {
             return formatter.formatCellValue(cell, evaluator).trim();
         } catch (Exception ex) {

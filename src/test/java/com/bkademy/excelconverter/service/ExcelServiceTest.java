@@ -4,6 +4,7 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -50,6 +51,56 @@ class ExcelServiceTest {
         processAndAssertSample(Y6RHM_SAMPLE, "20232", "1855010004");
     }
 
+    @Test
+    void keepsEachInputSheetSeparateInOutput() throws Exception {
+        ExcelService service = new ExcelService();
+
+        try (Workbook input = new XSSFWorkbook();
+             ByteArrayInputStream inputStream = createMultiSheetWorkbook(input)) {
+            MockMultipartFile file = new MockMultipartFile(
+                    "files",
+                    "multi-sheet.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    inputStream.readAllBytes()
+            );
+            byte[] zipBytes = service.processFiles(new MockMultipartFile[]{file});
+
+            try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
+                assertNotNull(zis.getNextEntry());
+
+                Workbook result = WorkbookFactory.create(zis);
+                assertEquals(2, result.getNumberOfSheets());
+                assertNotNull(result.getSheet("Lop A"));
+                assertNotNull(result.getSheet("Lop B"));
+                assertEquals(1, (int) result.getSheet("Lop A").getRow(1).getCell(0).getNumericCellValue());
+                assertEquals(1, (int) result.getSheet("Lop B").getRow(1).getCell(0).getNumericCellValue());
+                assertEquals("SV001", result.getSheet("Lop A").getRow(1).getCell(1).getStringCellValue());
+                assertEquals("SV101", result.getSheet("Lop B").getRow(1).getCell(1).getStringCellValue());
+            }
+        }
+    }
+
+    private ByteArrayInputStream createMultiSheetWorkbook(Workbook workbook) throws Exception {
+        createStudentSheet(workbook, "Lop A", "SV001", "85");
+        createStudentSheet(workbook, "Lop B", "SV101", "90");
+
+        try (var out = new java.io.ByteArrayOutputStream()) {
+            workbook.write(out);
+            return new ByteArrayInputStream(out.toByteArray());
+        }
+    }
+
+    private void createStudentSheet(Workbook workbook, String sheetName, String mssv, String diem) {
+        Sheet sheet = workbook.createSheet(sheetName);
+        Row header = sheet.createRow(0);
+        header.createCell(0).setCellValue("MSSV");
+        header.createCell(1).setCellValue("Điểm rèn luyện");
+
+        Row student = sheet.createRow(1);
+        student.createCell(0).setCellValue(mssv);
+        student.createCell(1).setCellValue(diem);
+    }
+
     private void processAndAssertSample(Path sampleFile, String expectedSemester, String expectedMssvPrefix) throws Exception {
         ExcelService service = new ExcelService();
         byte[] zipBytes;
@@ -69,7 +120,8 @@ class ExcelServiceTest {
             assertNotNull(entry);
 
             Workbook result = WorkbookFactory.create(zis);
-            Sheet sheet = result.getSheet("Kết quả");
+            assertTrue(result.getNumberOfSheets() >= 1, "Expected at least one output sheet");
+            Sheet sheet = result.getSheetAt(0);
             assertNotNull(sheet);
             assertTrue(sheet.getLastRowNum() > 1, "Expected student rows in output");
 
